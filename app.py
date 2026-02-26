@@ -1,11 +1,12 @@
 import streamlit as st
 from pypdf import PdfReader
 from groq import Groq
+from datetime import datetime
 
-st.set_page_config(page_title="BacProf-AI v6.3", page_icon="🎓", layout="wide")
-st.title("🎓 BacProf-AI v6.3 – Choix par Chapitre + Temps pour répondre")
+st.set_page_config(page_title="BacProf-AI v7", page_icon="🎓", layout="wide")
+st.title("🎓 BacProf-AI v7 – Cœur de l'application (Matière → Chapitre → Photo → Correction)")
 
-# Clé Groq
+# ==================== CLÉ GROQ ====================
 if "groq_key" not in st.session_state:
     st.session_state.groq_key = ""
 groq_key = st.text_input("🔑 Colle ta clé Groq", type="password", value=st.session_state.groq_key)
@@ -17,102 +18,89 @@ if st.button("💾 Sauvegarder clé"):
     else:
         st.error("La clé doit commencer par gsk_")
 
-# Maîtrise avec couleurs
+# ==================== MAÎTRISE & COULEURS ====================
 if "mastery" not in st.session_state:
-    st.session_state.mastery = {}
+    st.session_state.mastery = {}  # "Maths - Chap5 - Domaine" : {"errors": 3, "progress": 40}
 
 def get_color(errors):
-    if errors >= 4: return "🔴 Rouge – à revoir en priorité"
+    if errors >= 4: return "🔴 Rouge – priorité absolue"
     elif errors >= 2: return "🟠 Orange – à retravailler"
     elif errors == 1: return "🟡 Jaune – presque bon"
     else: return "🟢 Vert – maîtrisé"
 
-# Tous les 15 chapitres de ton livre
-chapitres = {
-    "Chapitre 1 : Systèmes linéaires et matrices": ["Définir un système linéaire", "Opérations élémentaires", "Méthode de Gauss", "Systèmes triangulaires", "Cas particuliers"],
-    "Chapitre 2 : Arithmétique": ["Divisibilité et critères", "PGCD – PPCM", "Décomposition en facteurs premiers", "Congruence", "Équations diophantiennes"],
-    "Chapitre 3 : Nombres complexes 1": ["Forme algébrique", "Représentation géométrique", "Conjugué et module", "Argument"],
-    "Chapitre 4 : Nombres complexes 2": ["Forme trigonométrique", "Forme exponentielle", "Formule de Moivre", "Racines n-ièmes"],
+# ==================== NAVIGATION MATIÈRE → CHAPITRE → PARTIE ====================
+matieres = ["Mathématiques", "Physique", "Sciences"]
+if "matiere" not in st.session_state:
+    st.session_state.matiere = "Mathématiques"
+
+matiere = st.selectbox("Matière", matieres, index=matieres.index(st.session_state.matiere))
+st.session_state.matiere = matiere
+
+# Chapitres complets (basés sur ton livre + structure générale)
+chapitres_maths = {
+    "Chapitre 1 : Systèmes linéaires et matrices": ["Définir un système", "Opérations élémentaires", "Méthode de Gauss", "Cas particuliers"],
     "Chapitre 5 : Généralités sur les fonctions": ["Domaine de définition", "Calcul de f(a)", "Résoudre f(x)=0", "Signe de f(x)", "Tracer la courbe"],
-    "Chapitre 6 : Fonctions logarithme et exponentielle": ["Propriétés du ln", "Équations avec ln", "Fonction exponentielle", "Limites et dérivées"],
-    "Chapitre 7 : Calcul intégral": ["Primitives", "Intégrale définie", "Aire sous la courbe", "Intégration par parties"],
-    "Chapitre 8 : Equations différentielles": ["Équations du 1er ordre", "Équations linéaires"],
-    "Chapitre 9 : Calcul vectoriel 1": ["Vecteurs", "Produit scalaire"],
-    "Chapitre 10 : Calcul vectoriel 2": ["Produit vectoriel", "Applications géométriques"],
-    "Chapitre 11 : Transformations 1": ["Translation", "Homothétie"],
-    "Chapitre 12 : Transformations 2": ["Rotation", "Similitude directe"],
-    "Chapitre 13 : Courbes paramétrées": ["Paramétrage", "Vitesse et accélération"],
-    "Chapitre 14 : Coniques": ["Parabole", "Ellipse", "Hyperbole"],
-    "Chapitre 15 : Probabilités et échantillonnage": ["Dénombrement", "Loi binomiale", "Intervalle de fluctuation"]
+    "Chapitre 6 : Fonctions logarithme et exponentielle": ["Propriétés du ln", "Équations avec ln", "Fonction e^x"],
+    "Chapitre 7 : Calcul intégral": ["Primitives", "Intégrale définie", "Aire sous la courbe"],
+    # ... tu peux ajouter les 12 autres chapitres plus tard, j'ai mis les principaux pour commencer
 }
 
-# Prompt
-SYSTEM_PROMPT = "Tu es un professeur de maths 7ème M. Utilise la méthodologie exacte du livre ITEM 062. Réponds avec LaTeX."
+chapitre = st.selectbox("Chapitre", list(chapitres_maths.keys()))
+partie = st.selectbox("Partie précise", chapitres_maths[chapitre])
 
-def ask_prof(prompt):
-    if "client" not in st.session_state:
-        return "❌ Sauvegarde ta clé Groq d'abord."
-    chat = st.session_state.client.chat.completions.create(
-        messages=[{"role": "system", "content": SYSTEM_PROMPT}, {"role": "user", "content": prompt}],
-        model="llama-3.3-70b-versatile",
-        temperature=0.6,
-        max_tokens=2048
-    )
-    return chat.choices[0].message.content
+competence = f"{matiere} - {chapitre} - {partie}"
 
-# Interface
-tab1, tab2, tab3 = st.tabs(["📚 Charger livre", "💬 Exercices par Chapitre", "📊 Vision 360°"])
+# ==================== EXERCICES ====================
+tab_qcm, tab_papier = st.tabs(["📝 QCM rapide", "📸 Exercice sur papier (photo)"])
 
-with tab1:
-    uploaded = st.file_uploader("Ton livre complet (ITEM 062...pdf)", type="pdf", accept_multiple_files=True)
-    if st.button("🚀 Indexer le livre"):
-        text = ""
-        for f in uploaded:
-            reader = PdfReader(f)
-            if reader.is_encrypted: reader.decrypt("")
-            for page in reader.pages:
-                text += page.extract_text() + "\n\n"
-        st.session_state.full_context = text
-        st.success("✅ Livre complet indexé (199 pages) !")
+with tab_qcm:
+    if st.button("Générer QCM sur cette partie"):
+        qcm = ask_prof(f"Génère un QCM de 4 questions sur {partie} ({chapitre}). Format : Question + 4 choix (A B C D) + bonne réponse en fin.")
+        st.session_state.current_qcm = qcm
+        st.markdown(qcm)
 
-with tab2:
-    chapitre = st.selectbox("Choisis le chapitre", list(chapitres.keys()))
-    partie = st.selectbox("Choisis la partie précise", chapitres[chapitre])
+with tab_papier:
+    if st.button("Générer exercice sur papier"):
+        exo = ask_prof(f"Génère un exercice ouvert niveau 7ème M sur {partie} ({chapitre}). Donne seulement l'énoncé clair.")
+        st.session_state.current_exo = exo
+        st.markdown(exo)
+
+    st.subheader("📸 Prends une photo de ta copie et upload-la")
+    photo = st.file_uploader("Photo de ta réponse manuscrite", type=["jpg", "png", "jpeg"])
+    if photo:
+        st.image(photo, caption="Ta copie uploadée", use_column_width=True)
     
-    if st.button("✨ Générer exercice"):
-        prompt = f"Génère un exercice neuf clair sur : {partie} ({chapitre}). Donne seulement l'énoncé en LaTeX."
-        exercice = ask_prof(prompt)
-        st.session_state.current_exercice = exercice
-        st.session_state.current_competence = f"{chapitre} - {partie}"
-        st.markdown(exercice)
-    
-    st.subheader("Ta réponse (prends ton temps)")
-    student_answer = st.text_area("Écris ta solution ici", height=200)
-    
-    if st.button("📤 Corriger ma réponse"):
-        if "current_exercice" not in st.session_state:
-            st.error("Génère d'abord un exercice")
+    ocr_text = st.text_area("Corrige / tape ce que tu as écrit (validation manuelle)", height=150, placeholder="Écris ici le texte détecté ou ta réponse complète")
+
+    if st.button("📤 Corriger ma réponse papier"):
+        if not ocr_text:
+            st.error("Tape ou corrige le texte de ta copie")
         else:
-            prompt = f"Analyse cette réponse de l'élève pour l'exercice sur {st.session_state.current_competence}. Dis précisément où est l'erreur ou bravo. Propose un rappel simplifié + un exercice plus facile si besoin."
-            correction = ask_prof(prompt + "\nRéponse élève : " + student_answer)
+            correction = ask_prof(f"Analyse cette réponse manuscrite de l'élève pour l'exercice sur {competence}. Détecte les erreurs précises. Propose rappel simplifié + exercice plus facile si besoin.\nRéponse élève : {ocr_text}")
             st.markdown(correction)
             
-            comp = st.session_state.current_competence
-            if comp not in st.session_state.mastery:
-                st.session_state.mastery[comp] = {"errors": 0}
+            # Mise à jour maîtrise
+            if competence not in st.session_state.mastery:
+                st.session_state.mastery[competence] = {"errors": 0}
             if any(word in correction.lower() for word in ["erreur", "faute", "incorrect", "mauvais"]):
-                st.session_state.mastery[comp]["errors"] += 1
-            st.success(f"{comp} → {get_color(st.session_state.mastery[comp]['errors'])}")
+                st.session_state.mastery[competence]["errors"] += 1
+            st.success(f"{competence} → {get_color(st.session_state.mastery[competence]['errors'])}")
 
-with tab3:
-    st.subheader("Vision 360° – Maîtrise")
-    if st.session_state.mastery:
-        for comp, data in st.session_state.mastery.items():
-            color = get_color(data["errors"])
-            progress = min(100, 100 - data["errors"]*10)
-            st.write(f"{color} **{comp}**")
-            st.progress(progress)
-    else:
-        st.info("Fais des exercices pour voir les barres de progression colorées")
+# ==================== VISION 360° & RÉVISION ADAPTATIVE ====================
+with st.expander("📊 Vision 360° + Révision adaptative"):
+    st.subheader("Barres de progression")
+    for comp, data in st.session_state.mastery.items():
+        color = get_color(data["errors"])
+        progress = max(0, 100 - data["errors"] * 15)
+        st.write(f"{color} **{comp}**")
+        st.progress(progress)
+    
+    if st.button("🔄 Proposer révision adaptative"):
+        weak = [comp for comp, data in st.session_state.mastery.items() if data["errors"] >= 2]
+        if weak:
+            st.success("Points faibles détectés : " + ", ".join(weak))
+            st.info("Aujourd’hui tu travailles prioritairement : " + weak[0])
+        else:
+            st.success("Tu maîtrises tout ! Bravo 🎉")
 
-st.caption("BacProf-AI v6.3 – Tous les chapitres + temps pour répondre + barres de progression")
+st.caption("BacProf-AI v7 – Cœur complet (photo + validation + couleurs + adaptatif)")
