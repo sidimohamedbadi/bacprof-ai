@@ -1,15 +1,15 @@
 import streamlit as st
-import google.generativeai as genai
 from pypdf import PdfReader
+from groq import Groq
 
 st.set_page_config(page_title="BacProf-AI", page_icon="🎓", layout="wide")
-st.title("🎓 BacProf-AI v4 – Ton vrai prof IA pour le Bac Terminale")
+st.title("🎓 BacProf-AI v5 – Ton vrai prof IA (Groq Llama-3.3-70B)")
 
-# ==================== CLÉ API ====================
-api_key = st.text_input("🔑 Colle ta clé API Gemini (gratuite)", type="password", help="Crée-la sur https://aistudio.google.com/app/apikey")
+# ==================== CLÉ GROQ ====================
+groq_key = st.text_input("🔑 Colle ta clé Groq (gratuite)", type="password", help="Obtiens-la sur https://console.groq.com/keys")
 
-if api_key:
-    genai.configure(api_key=api_key)
+if groq_key:
+    client = Groq(api_key=groq_key)
 
 # ==================== FONCTIONS ====================
 def extract_text_from_pdfs(files):
@@ -21,41 +21,38 @@ def extract_text_from_pdfs(files):
                 reader.decrypt("")
             for page in reader.pages:
                 text += page.extract_text() + "\n\n"
-        except Exception as e:
-            st.warning(f"⚠️ {file.name} : {str(e)[:80]}")
+        except:
             continue
     return text
 
 SYSTEM_PROMPT = """Tu es un professeur agrégé de Terminale qui prépare le Bac depuis 20 ans.
-Tu suis EXACTEMENT la méthodologie du cours et des annales que l'élève a uploadées.
-Donne toujours étapes numérotées, notations BAC, et exercices 100% neufs dans le même style.
+Tu suis EXACTEMENT la méthodologie du cours et des annales corrigées que l'élève a uploadées.
+Règles strictes :
+- Utilise uniquement les méthodes présentes dans le contexte.
+- Réponds avec étapes numérotées, notations BAC précises.
+- Crée des exercices 100% neufs dans le même style que les sujets BAC.
 
-Contexte complet du cours :
+Contexte complet du cours et annales :
 {context}
 """
 
 def ask_prof(prompt: str):
-    if not api_key:
-        return "❌ Colle d'abord ta clé Gemini."
+    if not groq_key:
+        return "❌ Colle d'abord ta clé Groq."
     
     try:
-        # Test avec plusieurs modèles en fallback
-        models = ['gemini-1.5-flash', 'gemini-1.5-flash-latest', 'gemini-1.5-pro']
-        context = st.session_state.get("full_context", "")[:80000]
+        context = st.session_state.get("full_context", "")[:90000]
+        full_prompt = SYSTEM_PROMPT.format(context=context) + "\n\nDemande de l'élève : " + prompt
         
-        for model_name in models:
-            try:
-                model = genai.GenerativeModel(model_name)
-                full_prompt = SYSTEM_PROMPT.format(context=context) + "\n\nDemande de l'élève : " + prompt
-                response = model.generate_content(full_prompt)
-                return response.text
-            except Exception:
-                continue  # Essaie le modèle suivant
-        
-        return "❌ Aucun modèle Gemini n'a répondu. Essaie de créer une nouvelle clé API."
-    
+        chat_completion = client.chat.completions.create(
+            messages=[{"role": "system", "content": full_prompt}, {"role": "user", "content": prompt}],
+            model="llama-3.3-70b-versatile",
+            temperature=0.7,
+            max_tokens=2048
+        )
+        return chat_completion.choices[0].message.content
     except Exception as e:
-        return f"❌ Erreur Gemini : {str(e)}\n\nCrée une nouvelle clé API sur Google AI Studio."
+        return f"❌ Erreur : {str(e)}\nVérifie que ta clé Groq est correcte."
 
 # ==================== INTERFACE ====================
 tab1, tab2, tab3 = st.tabs(["📚 Charger cours & annales", "💬 Chat avec mon prof", "📊 Vision 360°"])
@@ -66,15 +63,13 @@ with tab1:
     if st.button("🚀 Indexer tout", type="primary") and uploaded:
         with st.spinner("Lecture des PDFs..."):
             st.session_state.full_context = extract_text_from_pdfs(uploaded)
-            st.success(f"✅ {len(uploaded)} fichiers chargés !")
+            st.success(f"✅ {len(uploaded)} fichiers chargés ! Ton prof connaît tout.")
 
 with tab2:
     st.subheader("Parle à ton prof IA")
-    
-    # Bouton de test de clé
-    if st.button("🔍 Tester ma clé API"):
-        with st.spinner("Test en cours..."):
-            test = ask_prof("Dis-moi simplement 'Test OK' si tu fonctionnes.")
+    if st.button("🔍 Tester ma clé Groq"):
+        with st.spinner("Test..."):
+            test = ask_prof("Dis simplement 'Test Groq OK' si tu es prêt.")
             st.write(test)
     
     user_input = st.chat_input("Exemple : Génère un exercice neuf sur les fonctions dérivées")
@@ -82,11 +77,11 @@ with tab2:
         with st.chat_message("user"):
             st.markdown(user_input)
         with st.chat_message("assistant"):
-            with st.spinner("Ton prof réfléchit..."):
+            with st.spinner("Ton prof réfléchit (très rapide avec Groq)..."):
                 answer = ask_prof(user_input)
                 st.markdown(answer)
 
 with tab3:
-    st.info("Vision 360° avec couleurs et suivi des erreurs → arrive dans la prochaine version")
+    st.info("Vision 360° + couleurs erreurs répétées arrive dans 2 jours.")
 
-st.caption("BacProf-AI v4 – Test clé + fallback modèles")
+st.caption("BacProf-AI v5 – Groq Llama-3.3-70B (ultra-rapide et fiable partout)")
